@@ -1,0 +1,21 @@
+{
+  "name": "svgview",
+  "version": "0.1.0",
+  "description": "Local SVG preview CLI with live reload and a small file library.",
+  "bin": {
+    "svgview": "./bin/svgview.js"
+  },
+  "scripts": {
+    "start": "node ./bin/svgview.js",
+    "check": "node --check ./bin/svgview.js"
+  },
+  "keywords": [
+    "svg",
+    "preview",
+    "cli"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
