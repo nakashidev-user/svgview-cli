@@ -112,10 +112,3 @@ SVGファイルの保存先:
   ]
 }
 ```
-
-## 開発
-
-```sh
-npm run check
-```
-# svgview-cli
