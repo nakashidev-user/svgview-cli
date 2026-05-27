@@ -276,6 +276,10 @@
 
     .item {
       width: 100%;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: start;
+      gap: 8px;
       text-align: left;
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -291,9 +295,31 @@
       border-color: var(--accent);
     }
 
+    .item-body {
+      min-width: 0;
+    }
+
     .item-name {
       font-weight: 650;
       overflow-wrap: anywhere;
+    }
+
+    .item-delete {
+      width: 26px;
+      height: 26px;
+      border: 1px solid transparent;
+      border-radius: 6px;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      font: inherit;
+      line-height: 1;
+    }
+
+    .item-delete:hover {
+      border-color: #ffccd5;
+      background: #fff0f3;
+      color: #cf222e;
     }
 
     .item-meta {
@@ -514,16 +540,43 @@
       }
 
       for (const item of items) {
-        const button = document.createElement('button');
-        button.type = 'button';
+        const button = document.createElement('div');
         button.className = 'item' + (item.id === selectedId ? ' active' : '');
+        button.tabIndex = 0;
+        button.role = 'button';
         button.dataset.itemId = item.id;
-        button.innerHTML = '<div class="item-name"></div><div class="item-meta"></div>';
+        button.innerHTML = '<div class="item-body"><div class="item-name"></div><div class="item-meta"></div></div><button type="button" class="item-delete" title="Remove from library" aria-label="Remove from library">×</button>';
         button.querySelector('.item-name').textContent = item.name;
         button.querySelector('.item-meta').textContent = formatDate(item.updatedAt) + ' / ' + Math.round((item.size || 0) / 1024) + ' KB';
         button.addEventListener('click', () => selectItem(item.id));
+        button.addEventListener('keydown', (event) => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            selectItem(item.id);
+          }
+        });
+        button.querySelector('.item-delete').addEventListener('click', (event) => {
+          event.stopPropagation();
+          deleteItem(item.id, item.name);
+        });
         library.appendChild(button);
       }
+    }
+
+    async function deleteItem(id, name) {
+      if (!confirm('Remove "' + name + '" from the library?')) {
+        return;
+      }
+      const response = await fetch('/library/' + encodeURIComponent(id), { method: 'DELETE' });
+      if (!response.ok) {
+        connectionStatus.textContent = 'Failed to remove SVG';
+        return;
+      }
+      if (selectedId === id) {
+        selectedId = null;
+      }
+      await loadLibrary({ focus: true });
+      connectionStatus.textContent = 'Removed from library';
     }
 
     function renderCanvas() {
@@ -593,8 +646,8 @@
       });
     }
 
-    zoomOut.addEventListener('click', () => setZoomAtViewportCenter(zoom / 1.17));
-    zoomIn.addEventListener('click', () => setZoomAtViewportCenter(zoom * 1.17));
+    zoomOut.addEventListener('click', () => setZoomAtViewportCenter(zoom / 1.6));
+    zoomIn.addEventListener('click', () => setZoomAtViewportCenter(zoom * 1.6));
     zoomFit.addEventListener('click', fitSelectedTile);
     zoomValue.addEventListener('click', resetZoom);
     previewWrap.addEventListener('wheel', (event) => {
@@ -602,7 +655,9 @@
         return;
       }
       event.preventDefault();
-      setZoomAt(event.deltaY > 0 ? zoom / 1.025 : zoom * 1.025, event.clientX, event.clientY);
+      const isPinch = event.ctrlKey && !event.metaKey;
+      const factor = isPinch ? 1.035 : 1.18;
+      setZoomAt(event.deltaY > 0 ? zoom / factor : zoom * factor, event.clientX, event.clientY);
     }, { passive: false });
 
     let isPanning = false;
