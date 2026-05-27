@@ -304,6 +304,7 @@ async function addToLibrary(sourcePath, stat) {
     existing.name = path.basename(realSourcePath);
     existing.updatedAt = now;
     existing.size = stat.size;
+    delete existing.deletedAt;
     await writeIndex(index);
     return existing;
   }
@@ -328,10 +329,23 @@ async function addToLibrary(sourcePath, stat) {
   return item;
 }
 
+async function deleteLibraryItem(id) {
+  const index = await readIndex();
+  const item = index.items.find((entry) => entry.id === id && !entry.deletedAt);
+  if (!item) {
+    return null;
+  }
+  const now = new Date().toISOString();
+  item.deletedAt = now;
+  item.updatedAt = now;
+  await writeIndex(index);
+  return item;
+}
+
 async function updateLibraryItemFromSource(sourcePath) {
   const index = await readIndex();
   const realSourcePath = await fsp.realpath(sourcePath);
-  const item = index.items.find((entry) => entry.sourcePath === realSourcePath);
+  const item = index.items.find((entry) => entry.sourcePath === realSourcePath && !entry.deletedAt);
   if (!item) {
     return null;
   }
@@ -400,12 +414,13 @@ function createServer(state) {
       if (req.method === 'GET' && url.pathname === '/library') {
         const index = await readIndex();
         const currentRealPath = state.currentFile ? await fsp.realpath(state.currentFile).catch(() => state.currentFile) : null;
+        const visibleItems = index.items.filter((item) => !item.deletedAt);
         const currentItem = currentRealPath
-          ? index.items.find((item) => item.sourcePath === currentRealPath)
+          ? visibleItems.find((item) => item.sourcePath === currentRealPath)
           : null;
         sendJson(res, 200, {
           currentId: currentItem ? currentItem.id : null,
-          items: index.items.map((item) => ({
+          items: visibleItems.map((item) => ({
             id: item.id,
             name: item.name,
             storedPath: item.storedPath,
@@ -422,7 +437,7 @@ function createServer(state) {
       if (req.method === 'GET' && libraryMatch) {
         const id = decodeURIComponent(libraryMatch[1]);
         const index = await readIndex();
-        const item = index.items.find((entry) => entry.id === id);
+        const item = index.items.find((entry) => entry.id === id && !entry.deletedAt);
         if (!item) {
           sendError(res, 404, 'Library item not found');
           return;
@@ -433,6 +448,17 @@ function createServer(state) {
           'Content-Type': 'image/svg+xml; charset=utf-8',
           'Cache-Control': 'no-store'
         });
+        return;
+      }
+
+      if (req.method === 'DELETE' && libraryMatch) {
+        const id = decodeURIComponent(libraryMatch[1]);
+        const item = await deleteLibraryItem(id);
+        if (!item) {
+          sendError(res, 404, 'Library item not found');
+          return;
+        }
+        sendJson(res, 200, { ok: true, id, deletedAt: item.deletedAt });
         return;
       }
 
