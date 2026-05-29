@@ -15,7 +15,15 @@
 - 外部通信は行いません。
 - ランタイム依存パッケージはありません。
 
-## ローカル開発でのインストール
+## インストール
+
+### Homebrew（推奨）
+
+```sh
+brew install nakashidev-user/tap/svgview
+```
+
+### ローカル開発
 
 ```sh
 npm link
