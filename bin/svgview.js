@@ -17,6 +17,7 @@ const PID_PATH = path.join(ROOT_DIR, 'server.pid');
 const LOG_PATH = path.join(ROOT_DIR, 'server.log');
 const VIEWER_PATH = path.join(__dirname, '..', 'public', 'viewer.html');
 const DEFAULT_PORT = 3899;
+const UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 
 function printUsage() {
   console.log(`Usage:
@@ -329,6 +330,111 @@ async function addToLibrary(sourcePath, stat) {
   return item;
 }
 
+function looksLikeSvg(buffer) {
+  const head = buffer.slice(0, Math.min(buffer.length, 512)).toString('utf8').trim().toLowerCase();
+  return head.startsWith('<svg') || head.startsWith('<?xml');
+}
+
+function sanitizeUploadName(rawName) {
+  const fallback = 'uploaded.svg';
+  if (!rawName || typeof rawName !== 'string') {
+    return fallback;
+  }
+  const base = path.basename(rawName).replace(/[\x00-\x1f]/g, '').trim();
+  if (!base) {
+    return fallback;
+  }
+  if (path.extname(base).toLowerCase() !== '.svg') {
+    return `${base}.svg`;
+  }
+  return base;
+}
+
+async function ensureSha256ForItem(item) {
+  if (item.sha256) {
+    return item.sha256;
+  }
+  const storedAbsolutePath = path.join(ROOT_DIR, item.storedPath);
+  try {
+    const data = await fsp.readFile(storedAbsolutePath);
+    item.sha256 = crypto.createHash('sha256').update(data).digest('hex');
+    return item.sha256;
+  } catch {
+    return null;
+  }
+}
+
+async function addUploadedToLibrary(buffer, rawName) {
+  await ensureStorage();
+  const sha256 = crypto.createHash('sha256').update(buffer).digest('hex');
+  const name = sanitizeUploadName(rawName);
+  const index = await readIndex();
+  const now = new Date().toISOString();
+
+  let dirty = false;
+  for (const entry of index.items) {
+    if (entry.sha256) {
+      continue;
+    }
+    const computed = await ensureSha256ForItem(entry);
+    if (computed) {
+      dirty = true;
+    }
+  }
+
+  const existing = index.items.find((entry) => entry.sha256 === sha256 && !entry.deletedAt);
+  if (existing) {
+    existing.updatedAt = now;
+    existing.name = name;
+    await writeIndex(index);
+    return { item: existing, created: false };
+  }
+
+  const id = createId();
+  const storedFileName = `${id}.svg`;
+  const storedPath = path.join('library', storedFileName);
+  const storedAbsolutePath = path.join(ROOT_DIR, storedPath);
+  await fsp.writeFile(storedAbsolutePath, buffer);
+
+  const item = {
+    id,
+    name,
+    storedPath,
+    sourcePath: null,
+    origin: 'upload',
+    sha256,
+    createdAt: now,
+    updatedAt: now,
+    size: buffer.length
+  };
+  index.items.unshift(item);
+  await writeIndex(index);
+  return { item, created: true, indexDirty: dirty };
+}
+
+function readRequestBody(req, maxBytes) {
+  return new Promise((resolve, reject) => {
+    const declared = Number(req.headers['content-length']);
+    if (Number.isFinite(declared) && declared > maxBytes) {
+      reject(Object.assign(new Error('Payload too large'), { statusCode: 413 }));
+      return;
+    }
+    const chunks = [];
+    let received = 0;
+    req.on('data', (chunk) => {
+      received += chunk.length;
+      if (received > maxBytes) {
+        reject(Object.assign(new Error('Payload too large'), { statusCode: 413 }));
+        req.destroy();
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks, received)));
+    req.on('error', reject);
+  });
+}
+
 async function deleteLibraryItem(id) {
   const index = await readIndex();
   const item = index.items.find((entry) => entry.id === id && !entry.deletedAt);
@@ -429,6 +535,37 @@ function createServer(state) {
             updatedAt: item.updatedAt,
             size: item.size
           }))
+        });
+        return;
+      }
+
+      if (req.method === 'POST' && url.pathname === '/library') {
+        let buffer;
+        try {
+          buffer = await readRequestBody(req, UPLOAD_MAX_BYTES);
+        } catch (error) {
+          sendError(res, error.statusCode || 400, error.message);
+          return;
+        }
+        if (!buffer.length) {
+          sendError(res, 400, 'Empty upload');
+          return;
+        }
+        if (!looksLikeSvg(buffer)) {
+          sendError(res, 415, 'Uploaded data does not look like SVG');
+          return;
+        }
+        const rawName = req.headers['x-svgview-filename']
+          ? decodeURIComponent(String(req.headers['x-svgview-filename']))
+          : 'uploaded.svg';
+        const { item, created } = await addUploadedToLibrary(buffer, rawName);
+        broadcastReload(state, item);
+        sendJson(res, created ? 201 : 200, {
+          id: item.id,
+          name: item.name,
+          created,
+          updatedAt: item.updatedAt,
+          size: item.size
         });
         return;
       }
