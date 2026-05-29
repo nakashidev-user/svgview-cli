@@ -269,6 +269,44 @@
       line-height: 1.5;
     }
 
+    .library-actions {
+      display: grid;
+      gap: 6px;
+      margin-bottom: 12px;
+    }
+
+    .open-file {
+      width: 100%;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      min-height: 38px;
+      padding: 0 14px;
+      border-radius: 8px;
+      border: 1px solid var(--accent);
+      background: var(--accent);
+      color: #fff;
+      font: inherit;
+      font-weight: 650;
+      cursor: pointer;
+    }
+
+    .open-file:hover {
+      filter: brightness(1.05);
+    }
+
+    .open-file:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .open-file-hint {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.4;
+    }
+
     .library {
       display: grid;
       gap: 8px;
@@ -379,6 +417,14 @@
       </div>
       <div class="status" id="connectionStatus">Connecting...</div>
       <h2>Library</h2>
+      <div class="library-actions">
+        <button type="button" class="open-file" id="openFileButton">
+          <span aria-hidden="true">+</span>
+          <span>ファイルを開く</span>
+        </button>
+        <div class="open-file-hint">監視・自動リロードは <code>svgview &lt;path&gt;</code> 起動時のみ</div>
+        <input type="file" id="openFileInput" accept=".svg,image/svg+xml" hidden>
+      </div>
       <div class="library" id="library"></div>
     </aside>
     <main>
@@ -420,6 +466,9 @@
     const zoomIn = document.getElementById('zoomIn');
     const zoomFit = document.getElementById('zoomFit');
     const zoomValue = document.getElementById('zoomValue');
+    const openFileButton = document.getElementById('openFileButton');
+    const openFileInput = document.getElementById('openFileInput');
+    const UPLOAD_MAX_BYTES = 10 * 1024 * 1024;
 
     let selectedId = null;
     let items = [];
@@ -635,6 +684,49 @@
         requestAnimationFrame(() => focusSelectedTile());
       }
     }
+
+    async function uploadSvgFile(file) {
+      if (!file) return;
+      if (file.size > UPLOAD_MAX_BYTES) {
+        connectionStatus.textContent = 'ファイルが大きすぎます (10MB 以下)';
+        return;
+      }
+      const ext = (file.name || '').toLowerCase().split('.').pop();
+      if (ext !== 'svg' && file.type !== 'image/svg+xml') {
+        connectionStatus.textContent = 'SVG ファイルを選択してください';
+        return;
+      }
+      try {
+        connectionStatus.textContent = 'アップロード中...';
+        const response = await fetch('/library', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'image/svg+xml',
+            'X-Svgview-Filename': encodeURIComponent(file.name || 'uploaded.svg')
+          },
+          body: file
+        });
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.error || ('Upload failed: ' + response.status));
+        }
+        const data = await response.json();
+        selectedId = data.id;
+        await loadLibrary({ focus: true });
+        connectionStatus.textContent = data.created ? 'ライブラリに追加しました' : '既存アイテムを更新しました';
+      } catch (error) {
+        connectionStatus.textContent = error.message || 'アップロードに失敗しました';
+      }
+    }
+
+    openFileButton.addEventListener('click', () => openFileInput.click());
+    openFileInput.addEventListener('change', () => {
+      const file = openFileInput.files && openFileInput.files[0];
+      openFileInput.value = '';
+      if (file) {
+        uploadSvgFile(file);
+      }
+    });
 
     for (const button of bgButtons) {
       button.addEventListener('click', () => {
